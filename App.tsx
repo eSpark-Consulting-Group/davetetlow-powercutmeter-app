@@ -175,7 +175,7 @@ const App: React.FC = () => {
 
   const configureWiFi = async (): Promise<void> => {
     try {
-      const SERVICE_UUID = 'your-service-uuid-here';
+      const SERVICE_UUID = '00000180-0000-1000-8000-00805f9b34fb';
       const WIFI_SSID_CHARACTERISTIC = 'your-ssid-characteristic-uuid';
       const WIFI_PASSWORD_CHARACTERISTIC = 'your-password-characteristic-uuid';
       const ssidBytes = Array.from(new TextEncoder().encode(wifiSSID));
