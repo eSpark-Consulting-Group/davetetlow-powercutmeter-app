@@ -12,33 +12,16 @@ import {
   SafeAreaView,
   Modal,
   TextInput,
-  Keyboard,
   Image,
   Animated,
   Dimensions,
 } from 'react-native';
-import { BleManager, Device, State } from 'react-native-ble-plx';
-import WifiManager from 'react-native-wifi-reborn';
-
-// Type definitions
-interface DeviceData {
-  device_id: string;
-  cutoff_detection: boolean;
-  low_battery_indication: boolean;
-  timestamp?: string;
-}
-
-interface ConnectedDevice {
-  id: string;
-  name: string;
-  data: DeviceData;
-}
-
-interface MockDevice {
-  id: string;
-  name: string;
-  rssi: number;
-}
+import { BLEDevice, ConnectedDevice } from './src/types/ble';
+import { useBLE } from './src/hook/useBle';
+import { requestBLEPermissions } from './src/utils/blePermission';
+import api from './src/api';
+import { getDeviceData } from './src/utils/deviceData';
+import useSocket from './src/hook/useSocket';
 
 type ScreenType =
   | 'scanning'
@@ -52,22 +35,58 @@ const App: React.FC = () => {
   const { height, width } = Dimensions.get('window');
   const [showPassword, setShowPassword] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('scanning');
-  const [bleManager] = useState<BleManager>(new BleManager());
-  const [scannedDevices, setScannedDevices] = useState<Device[]>([]);
-  const [mockDevices, setMockDevices] = useState<MockDevice[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<
-    Device | MockDevice | null
-  >(null);
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDevice[]>(
     [],
   );
-  const [isScanning, setIsScanning] = useState<boolean>(false);
   const [wifiSSID, setWifiSSID] = useState<string>('');
   const [wifiPassword, setWifiPassword] = useState<string>('');
   const [showWifiModal, setShowWifiModal] = useState<boolean>(false);
 
-  // Animated border for scanning
+  const {
+    isScanning,
+    devices,
+    connectedDevice,
+    startScan,
+    stopScan,
+    connectToDevice: connectToBLEDevice,
+    disconnect,
+    writeData,
+    readData,
+  } = useBLE();
+
   const borderAnim = React.useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const checkPermissions = async () => {
+      const granted = await requestBLEPermissions();
+      if (!granted) {
+        Alert.alert(
+          'Permissions Required',
+          'Bluetooth permissions are required to proceed.',
+        );
+      }
+    };
+
+    checkPermissions();
+  }, []);
+
+  useSocket({
+    onDeviceUpdate: updatedDevice => {
+      setConnectedDevices(prevDevices => {
+        const existingIndex = prevDevices.findIndex(
+          d => d.device_id === updatedDevice.device_id,
+        );
+
+        if (existingIndex !== -1) {
+          const updatedList = [...prevDevices];
+          updatedList[existingIndex] = updatedDevice;
+          return updatedList; 
+        } else {
+          return [...prevDevices, updatedDevice];
+        }
+      });
+    },
+  });
 
   useEffect(() => {
     if (isScanning) {
@@ -84,222 +103,95 @@ const App: React.FC = () => {
     }
   }, [isScanning, borderAnim]);
 
-  // Interpolate border color
   const borderColor = borderAnim.interpolate({
     inputRange: [0, 0.5, 1],
     outputRange: ['#d1d5db', '#008EFB', '#d1d5db'],
   });
 
-  // Static mock data for testing (comment out when using real devices)
-  const MOCK_DEVICES: MockDevice[] = [
-    { id: '1', name: 'Device ID_ESP_34:CD:B0:85:8C:AC', rssi: -45 },
-    { id: '2', name: 'Device ID_ESP_34:CD:B0:85:8C:AD', rssi: -52 },
-    { id: '3', name: 'Device ID_ESP_34:CD:B0:85:8C:AE', rssi: -38 },
-    { id: '4', name: 'Device ID_ESP_34:CD:B0:85:8C:AF', rssi: -61 },
-    { id: '5', name: 'Device ID_ESP_34:CD:B0:85:8C:B0', rssi: -47 },
-  ];
-
-  useEffect(() => {
-    requestPermissions();
-    return () => {
-      bleManager.destroy();
-    };
-  }, [bleManager]);
-
-  // Mock dashboard data --- IGNORE ---
-  // This effect simulates connected devices for the dashboard screen
   useEffect(() => {
     if (currentScreen === 'dashboard') {
-      const interval = setInterval(() => {
-        const mockConnectedDevices: ConnectedDevice[] = [
-          {
-            id: '265624',
-            name: 'ESP32_Device_1',
-            data: {
-              device_id: 'ESP_34:CD:B0:85:8C:AC',
-              cutoff_detection: false,
-              low_battery_indication: true,
-              timestamp: new Date().toLocaleTimeString(),
-            },
-          },
-          {
-            id: '265625',
-            name: 'ESP32_Device_2',
-            data: {
-              device_id: 'ESP_34:CD:B0:85:8C:AD',
-              cutoff_detection: true,
-              low_battery_indication: true,
-              timestamp: new Date().toLocaleTimeString(),
-            },
-          },
-          {
-            id: '265626',
-            name: 'ESP32_Device_3',
-            data: {
-              device_id: 'ESP_34:CD:B0:85:8C:AE',
-              cutoff_detection: false,
-              low_battery_indication: false,
-              timestamp: new Date().toLocaleTimeString(),
-            },
-          },
-          {
-            id: '265627',
-            name: 'ESP32_Device_4',
-            data: {
-              device_id: 'ESP_34:CD:B0:85:8C:AF',
-              cutoff_detection: Math.random() > 0.5,
-              low_battery_indication: Math.random() > 0.5,
-              timestamp: new Date().toLocaleTimeString(),
-            },
-          },
-        ];
-        setConnectedDevices(mockConnectedDevices);
-      }, 3000);
-
-      return () => clearInterval(interval);
+      fetchData();
     }
   }, [currentScreen]);
 
-  const requestPermissions = async (): Promise<void> => {
-    if (Platform.OS === 'android') {
-      const permissions = [
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-      ];
-
-      try {
-        const granted = await PermissionsAndroid.requestMultiple(permissions);
-        console.log('Permissions granted:', granted);
-      } catch (error) {
-        console.log('Permission request error:', error);
-      }
+  const fetchData = async () => {
+    const response = await getDeviceData();
+    if (response.status) {
+      setConnectedDevices(response.deviceData || []);
+    } else {
+      console.error('Error:', response?.message);
     }
   };
 
   const startScanning = async (): Promise<void> => {
-    setIsScanning(true);
-    setScannedDevices([]);
-    setMockDevices([]);
-
-    // STATIC DATA FOR TESTING - Comment out when using real devices
-    setTimeout(() => {
-      setMockDevices(MOCK_DEVICES);
-      setIsScanning(false);
-      setCurrentScreen('deviceList');
-    }, 3000);
-
-    /* REAL DEVICE SCANNING - Uncomment when using real devices
     try {
-      const state: State = await bleManager.state();
-      if (state !== 'PoweredOn') {
-        Alert.alert('Bluetooth', 'Please enable Bluetooth');
-        setIsScanning(false);
-        return;
-      }
-
-      bleManager.startDeviceScan(null, null, (error, device) => {
-        if (error) {
-          console.log('Scan error:', error);
-          setIsScanning(false);
-          return;
-        }
-
-        if (device && device.name && device.name.includes('ESP32')) {
-          setScannedDevices(prevDevices => {
-            const exists = prevDevices.find(d => d.id === device.id);
-            if (!exists) {
-              return [...prevDevices, device];
-            }
-            return prevDevices;
-          });
-        }
-      });
-
-      setTimeout(() => {
-        bleManager.stopDeviceScan();
-        setIsScanning(false);
+      await startScan();
+      setTimeout(async () => {
+        await stopScan();
         setCurrentScreen('deviceList');
       }, 10000);
     } catch (error) {
-      console.log('Scan error:', error);
-      setIsScanning(false);
+      Alert.alert(
+        'Scan Error',
+        error instanceof Error ? error.message : 'Failed to start scanning',
+      );
     }
-    */
   };
 
-  const selectDevice = (device: Device | MockDevice): void => {
+  const selectDevice = (device: any): void => {
     console.log('Selected device:', device);
-    setSelectedDevice(device);
     setShowWifiModal(true);
   };
 
   const connectToDevice = async (): Promise<void> => {
-    if (!selectedDevice || !wifiSSID || !wifiPassword) {
+    if (!wifiSSID || !wifiPassword) {
       Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    if (devices.length === 0) {
+      Alert.alert('Error', 'No device selected');
       return;
     }
 
     setShowWifiModal(false);
     setCurrentScreen('connecting');
 
-    // STATIC CONNECTION FOR TESTING
-    setTimeout(() => {
-      setCurrentScreen('success');
-      setTimeout(() => {
-        setCurrentScreen('dashboard');
-      }, 2000);
-    }, 3000);
-
-    /* REAL DEVICE CONNECTION - Uncomment when using real devices
     try {
-      if ('connect' in selectedDevice) {
-        const connectedDevice = await selectedDevice.connect();
-        await connectedDevice.discoverAllServicesAndCharacteristics();
-        await configureWiFi(connectedDevice);
-      }
-      
+      const deviceToConnect = devices[0];
+      await connectToBLEDevice(deviceToConnect);
+      await configureWiFi();
+
       setCurrentScreen('success');
       setTimeout(() => {
         setCurrentScreen('dashboard');
       }, 2000);
-      
     } catch (error) {
       console.log('Connection error:', error);
       Alert.alert('Connection Error', 'Failed to connect to device');
       setCurrentScreen('deviceList');
     }
-    */
   };
 
-  const configureWiFi = async (device: Device): Promise<void> => {
+  const configureWiFi = async (): Promise<void> => {
     try {
-      // Send WiFi credentials to ESP32 device
-      console.log('Configuring WiFi with SSID:', wifiSSID);
+      const SERVICE_UUID = 'your-service-uuid-here';
+      const WIFI_SSID_CHARACTERISTIC = 'your-ssid-characteristic-uuid';
+      const WIFI_PASSWORD_CHARACTERISTIC = 'your-password-characteristic-uuid';
+      const ssidBytes = Array.from(new TextEncoder().encode(wifiSSID));
+      const passwordBytes = Array.from(new TextEncoder().encode(wifiPassword));
+      await writeData(SERVICE_UUID, WIFI_SSID_CHARACTERISTIC, ssidBytes);
+      await writeData(
+        SERVICE_UUID,
+        WIFI_PASSWORD_CHARACTERISTIC,
+        passwordBytes,
+      );
+      console.log('WiFi credentials sent successfully');
     } catch (error) {
       console.log('WiFi configuration error:', error);
+      throw error;
     }
   };
-
-  const StatusBar: React.FC = () => (
-    <View style={styles.statusBar}>
-      <Text style={styles.time}>9:41</Text>
-      <View style={styles.statusIcons}>
-        <View style={styles.signalBars}>
-          <View style={[styles.bar, styles.barActive]} />
-          <View style={[styles.bar, styles.barActive]} />
-          <View style={[styles.bar, styles.barActive]} />
-          <View style={[styles.bar, styles.barActive]} />
-        </View>
-        <Text style={styles.wifiIcon}>📶</Text>
-        <View style={styles.batteryIcon}>
-          <View style={styles.batteryBody} />
-          <View style={styles.batteryTip} />
-        </View>
-      </View>
-    </View>
-  );
 
   const StatusPill: React.FC<{ status: boolean }> = ({ status }) => (
     <View
@@ -312,25 +204,45 @@ const App: React.FC = () => {
     </View>
   );
 
-  const DeviceCard: React.FC<{ device: ConnectedDevice }> = ({ device }) => (
-    <View style={styles.deviceCard}>
-      <View style={styles.deviceIdBadge}>
-        <Text style={styles.deviceIdText}>Device ID_{device.id}</Text>
-      </View>
+  const DeviceCard: React.FC<{ device: ConnectedDevice }> = ({ device }) => {
+    const { device_id, data } = device;
 
-      <View style={styles.statusRow}>
-        <Text style={styles.statusLabel}>Power Cut-off</Text>
-        <StatusPill status={device.data.cutoff_detection} />
-      </View>
+    const formatKey = (key: string) =>
+      key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
-      <View style={styles.statusRow}>
-        <Text style={styles.statusLabel}>Battery Low</Text>
-        <StatusPill status={device.data.low_battery_indication} />
-      </View>
-    </View>
-  );
+    return (
+      <View style={styles.deviceCard}>
+        <View style={styles.deviceIdBadge}>
+          <Text style={styles.deviceIdText}>Device ID_{device_id}</Text>
+        </View>
 
-  // Main render logic
+        {data ? (
+          Object.entries(data).map(([key, value]) => (
+            <View style={styles.statusRow} key={key}>
+              <Text style={styles.statusLabel}>{formatKey(key)}</Text>
+              {typeof value === 'boolean' ? (
+                <StatusPill status={value} />
+              ) : (
+                <View
+                  style={[
+                    styles.statusPill,
+                    { backgroundColor: '#f3f4f6', minWidth: 80 },
+                  ]}
+                >
+                  <Text style={[styles.statusPillText, { color: '#374151' }]}>
+                    {String(value)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ))
+        ) : (
+          <Text style={styles.statusLabel}>No data available</Text>
+        )}
+      </View>
+    );
+  };
+
   let screenContent;
   if (currentScreen === 'scanning') {
     screenContent = (
@@ -343,7 +255,7 @@ const App: React.FC = () => {
             disabled={isScanning}
           >
             <Text style={styles.primaryButtonText}>
-              {isScanning ? 'Scanning Nearby Device' : 'Scanning Nearby Device'}
+              {isScanning ? 'Scanning Nearby Device...' : 'Scan Nearby Device'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -363,42 +275,75 @@ const App: React.FC = () => {
             </View>
           </Animated.View>
         </View>
+        {isScanning && (
+          <View style={styles.scanningInfo}>
+            <Text style={styles.scanningText}>
+              Looking for ESP32 devices...
+            </Text>
+            <Text style={styles.foundDevicesText}>
+              Found {devices.length} devices
+            </Text>
+          </View>
+        )}
       </SafeAreaView>
     );
   } else if (currentScreen === 'deviceList') {
-    const devicesToShow = mockDevices.length > 0 ? mockDevices : scannedDevices;
     screenContent = (
       <SafeAreaView style={styles.container}>
         <Text style={styles.header}>Add Device</Text>
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={[styles.button, styles.primaryButton]}>
-            <Text style={styles.primaryButtonText}>Available Device</Text>
+            <Text style={styles.primaryButtonText}>
+              Available Devices ({devices.length})
+            </Text>
           </TouchableOpacity>
         </View>
         <ScrollView style={styles.deviceList}>
-          {devicesToShow.map(device => (
-            <TouchableOpacity
-              key={device.id}
-              style={styles.availableDeviceItem}
-              onPress={() => selectDevice(device)}
-            >
-              <View style={styles.deviceIcon}>
-                <Image
-                  source={require('./src/assets/device.png')}
-                  style={{ width: 25, height: 25, marginRight: 10 }}
-                />
-              </View>
-              <Text style={styles.availableDeviceName}>
-                {'name' in device ? device.name : `Device ID_${device?.id}`}
-              </Text>
-              <View style={styles.deviceIcon}>
-                <Image
-                  source={require('./src/assets/lock.png')}
-                  style={{ width: 15, height: 15, resizeMode: 'contain' }}
-                />
-              </View>
-            </TouchableOpacity>
-          ))}
+          {devices.length === 0 ? (
+            <View style={styles.noDevicesContainer}>
+              <Text style={styles.noDevicesText}>No devices found</Text>
+              <TouchableOpacity
+                style={[styles.button, styles.secondaryButton]}
+                onPress={() => {
+                  setCurrentScreen('scanning');
+                  startScanning;
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>Scan Again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            devices.map((device: BLEDevice, index: number) => (
+              <TouchableOpacity
+                key={device.id || index}
+                style={styles.availableDeviceItem}
+                onPress={() => selectDevice(device)}
+              >
+                <View style={styles.deviceIcon}>
+                  <Image
+                    source={require('./src/assets/device.png')}
+                    style={{ width: 25, height: 25, marginRight: 10 }}
+                  />
+                </View>
+                <View style={styles.deviceInfo}>
+                  <Text style={styles.availableDeviceName}>
+                    {device.name || `Device ${device.id}`}
+                  </Text>
+                  {device.rssi && (
+                    <Text style={styles.deviceRssi}>
+                      Signal: {device.rssi} dBm
+                    </Text>
+                  )}
+                </View>
+                <View style={styles.deviceIcon}>
+                  <Image
+                    source={require('./src/assets/lock.png')}
+                    style={{ width: 15, height: 15, resizeMode: 'contain' }}
+                  />
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
         </ScrollView>
       </SafeAreaView>
     );
@@ -408,7 +353,7 @@ const App: React.FC = () => {
         <Text style={styles.header}>Add Device</Text>
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={[styles.button, styles.primaryButton]}>
-            <Text style={styles.primaryButtonText}>Available Device</Text>
+            <Text style={styles.primaryButtonText}>Connecting Device</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.connectingContainer}>
@@ -417,6 +362,11 @@ const App: React.FC = () => {
           <Text style={styles.connectingSubtext}>
             Configuring WiFi connection
           </Text>
+          {connectedDevice && (
+            <Text style={styles.connectedDeviceText}>
+              Connected to: {connectedDevice.name || connectedDevice.id}
+            </Text>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -426,12 +376,11 @@ const App: React.FC = () => {
         <Text style={styles.header}>Add Device</Text>
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={[styles.button, styles.primaryButton]}>
-            <Text style={styles.primaryButtonText}>Available Device</Text>
+            <Text style={styles.primaryButtonText}>Device Connected</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
-  // Removed misplaced closing brace here
   } else if (currentScreen === 'dashboard') {
     screenContent = (
       <View style={styles.dashboardContainer}>
@@ -443,7 +392,12 @@ const App: React.FC = () => {
               styles.primaryButton,
               { margin: 10, alignSelf: 'flex-end', paddingHorizontal: 24 },
             ]}
-            onPress={() => setCurrentScreen('scanning')}
+            onPress={() => {
+              setCurrentScreen('scanning');
+              if (connectedDevice) {
+                disconnect().catch(console.error);
+              }
+            }}
           >
             <Text style={styles.primaryButtonText}>Add Device</Text>
           </TouchableOpacity>
@@ -452,7 +406,7 @@ const App: React.FC = () => {
             showsVerticalScrollIndicator={false}
           >
             {connectedDevices.map(device => (
-              <DeviceCard key={device.id} device={device} />
+              <DeviceCard key={device.device_id} device={device} />
             ))}
           </ScrollView>
         </View>
@@ -460,11 +414,9 @@ const App: React.FC = () => {
     );
   }
 
-  // Always render the modals so they overlay any screen
   return (
     <>
       {screenContent}
-      {/* WiFi Configuration Modal */}
       <Modal
         visible={showWifiModal}
         transparent={true}
@@ -537,7 +489,6 @@ const App: React.FC = () => {
           </View>
         </View>
       </Modal>
-      {/* Success Modal Popup */}
       <Modal
         visible={currentScreen === 'success'}
         transparent={true}
@@ -584,58 +535,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
-  statusBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    paddingTop: 20,
-  },
-  time: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  statusIcons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  signalBars: {
-    flexDirection: 'row',
-    gap: 2,
-  },
-  bar: {
-    width: 3,
-    height: 12,
-    borderRadius: 1,
-    backgroundColor: '#000000',
-  },
-  barActive: {
-    backgroundColor: '#000000',
-  },
-  wifiIcon: {
-    fontSize: 14,
-  },
-  batteryIcon: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  batteryBody: {
-    width: 22,
-    height: 11,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 2,
-    backgroundColor: '#000000',
-  },
-  batteryTip: {
-    width: 1,
-    height: 6,
-    backgroundColor: '#000000',
-    marginLeft: 1,
-  },
   header: {
     fontSize: 20,
     fontWeight: '600',
@@ -660,19 +559,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
+  secondaryButton: {
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    paddingVertical: 12,
+    borderColor: '#d1d5db',
+    marginTop: 16,
+  },
+  secondaryButtonText: {
+    color: '#374151',
+    fontSize: 16,
+    fontWeight: '500',
+  },
   scanningCircle: {
-    // flex: 1,
     marginTop: 50,
     justifyContent: 'center',
     alignItems: 'center',
   },
   circularProgress: {
-    width: Dimensions.get('window').width * .8,
-    height: Dimensions.get('window').width * .8,
+    width: Dimensions.get('window').width * 0.8,
+    height: Dimensions.get('window').width * 0.8,
     borderRadius: 1000,
     borderWidth: 4,
-    borderColor: '#008EFB', // default, overridden by Animated.View
-    // borderStyle: 'dashed',
+    borderColor: '#008EFB',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
@@ -680,22 +589,33 @@ const styles = StyleSheet.create({
   deviceIcon: {
     alignItems: 'center',
   },
-  deviceBox: {
-    width: 60,
-    height: 40,
-    backgroundColor: '#1f2937',
-    borderRadius: 8,
+  scanningInfo: {
+    alignItems: 'center',
+    marginTop: 30,
+    paddingHorizontal: 24,
+  },
+  scanningText: {
+    fontSize: 16,
+    color: '#6b7280',
     marginBottom: 8,
   },
-  phoneIcon: {
-    width: 30,
-    height: 50,
-    backgroundColor: '#008EFB',
-    borderRadius: 6,
+  foundDevicesText: {
+    fontSize: 14,
+    color: '#008EFB',
+    fontWeight: '500',
   },
   deviceList: {
     flex: 1,
     paddingHorizontal: 24,
+  },
+  noDevicesContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  noDevicesText: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginBottom: 16,
   },
   availableDeviceItem: {
     flexDirection: 'row',
@@ -705,20 +625,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 12,
   },
-  deviceIconText: {
-    fontSize: 20,
-    marginRight: 12,
+  deviceInfo: {
+    flex: 1,
   },
   availableDeviceName: {
-    flex: 1,
     fontSize: 14,
     color: '#374151',
+    fontWeight: '500',
   },
-  copyButton: {
-    padding: 8,
-  },
-  copyButtonText: {
-    fontSize: 16,
+  deviceRssi: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
   },
   connectingContainer: {
     flex: 1,
@@ -739,10 +657,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
   },
-  successContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  connectedDeviceText: {
+    fontSize: 12,
+    color: '#008EFB',
+    marginTop: 16,
+    textAlign: 'center',
   },
   successModal: {
     backgroundColor: '#ffffff',
@@ -797,7 +716,7 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 16,
     borderColor: '#DEDEDE',
-    borderWidth: .5,
+    borderWidth: 0.5,
   },
   deviceIdBadge: {
     backgroundColor: '#008EFB',
@@ -881,13 +800,11 @@ const styles = StyleSheet.create({
   },
   modalButtons: {
     flexDirection: 'row',
-    // justifyContent: 'space-between',
     alignSelf: 'flex-end',
     marginTop: 20,
     gap: 12,
   },
   cancelButton: {
-    // flex: 1,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
@@ -900,7 +817,6 @@ const styles = StyleSheet.create({
     color: '#374151',
   },
   connectButton: {
-    // flex: 1,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
@@ -912,14 +828,5 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '500',
   },
-  bottomIndicator: {
-    height: 4,
-    width: 128,
-    backgroundColor: '#000000',
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 20,
-  },
 });
-
 export default App;
