@@ -41,6 +41,9 @@ const App: React.FC = () => {
   const [wifiSSID, setWifiSSID] = useState<string>('');
   const [wifiPassword, setWifiPassword] = useState<string>('');
   const [showWifiModal, setShowWifiModal] = useState<boolean>(false);
+  const [connectionStartTime, setConnectionStartTime] = useState<number>(
+    Date.now(),
+  );
 
   const {
     isScanning,
@@ -51,7 +54,7 @@ const App: React.FC = () => {
     connectToDevice: connectToBLEDevice,
     disconnect,
     writeData,
-    readData,
+    getDiscoveredDevices,
   } = useBLE();
 
   const borderAnim = React.useRef(new Animated.Value(0)).current;
@@ -80,7 +83,7 @@ const App: React.FC = () => {
         if (existingIndex !== -1) {
           const updatedList = [...prevDevices];
           updatedList[existingIndex] = updatedDevice;
-          return updatedList; 
+          return updatedList;
         } else {
           return [...prevDevices, updatedDevice];
         }
@@ -127,8 +130,10 @@ const App: React.FC = () => {
     try {
       await startScan();
       setTimeout(async () => {
+        const allDevices = await getDiscoveredDevices();
         await stopScan();
         setCurrentScreen('deviceList');
+        console.log('Cache devices:', allDevices.length);
       }, 10000);
     } catch (error) {
       Alert.alert(
@@ -140,58 +145,102 @@ const App: React.FC = () => {
 
   const selectDevice = (device: any): void => {
     console.log('Selected device:', device);
+    connectToDevice();
     setShowWifiModal(true);
   };
 
   const connectToDevice = async (): Promise<void> => {
-    if (!wifiSSID || !wifiPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
-
     if (devices.length === 0) {
       Alert.alert('Error', 'No device selected');
       return;
     }
 
-    setShowWifiModal(false);
-    setCurrentScreen('connecting');
-
     try {
       const deviceToConnect = devices[0];
+      const connectionStartTimeUTC = Date.now();
+      setConnectionStartTime(connectionStartTimeUTC);
       await connectToBLEDevice(deviceToConnect);
-      await configureWiFi();
-
-      setCurrentScreen('success');
-      setTimeout(() => {
-        setCurrentScreen('dashboard');
-      }, 2000);
     } catch (error) {
-      console.log('Connection error:', error);
-      Alert.alert('Connection Error', 'Failed to connect to device');
-      setCurrentScreen('deviceList');
+      Alert.alert(
+        'Connection Error',
+        'Failed to connect to the device. Please try again.',
+      );
     }
   };
 
   const configureWiFi = async (): Promise<void> => {
-    try {
-      const SERVICE_UUID = '00000180-0000-1000-8000-00805f9b34fb';
-      const WIFI_SSID_CHARACTERISTIC = 'your-ssid-characteristic-uuid';
-      const WIFI_PASSWORD_CHARACTERISTIC = 'your-password-characteristic-uuid';
-      const ssidBytes = Array.from(new TextEncoder().encode(wifiSSID));
-      const passwordBytes = Array.from(new TextEncoder().encode(wifiPassword));
-      await writeData(SERVICE_UUID, WIFI_SSID_CHARACTERISTIC, ssidBytes);
-      await writeData(
-        SERVICE_UUID,
-        WIFI_PASSWORD_CHARACTERISTIC,
-        passwordBytes,
-      );
-      console.log('WiFi credentials sent successfully');
-    } catch (error) {
-      console.log('WiFi configuration error:', error);
-      throw error;
+    if (!wifiSSID || !wifiPassword) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
     }
+    setShowWifiModal(false);
+    setCurrentScreen('connecting');
+    const SERVICE_UUID = '00000180-0000-1000-8000-00805f9b34fb';
+    const WIFI_CHARACTERISTIC = '0000CDAD-0000-1000-8000-00805f9b34fb';
+    const wifiCredentials = { ssid: wifiSSID, password: wifiPassword };
+    const jsonString = JSON.stringify(wifiCredentials);
+    const credentialsBytes = Array.from(new TextEncoder().encode(jsonString));
+    console.log('Sending WiFi credentials:', jsonString);
+    writeData(SERVICE_UUID, WIFI_CHARACTERISTIC, credentialsBytes)
+      .then(() => {
+        getAllRegisteredDevices();
+      })
+      .catch(err => {
+        getAllRegisteredDevices();
+      });
   };
+
+  const getAllRegisteredDevices = async () => {
+    setTimeout(async () => {
+      const response = await getDeviceData();
+
+      if (response.status) {
+        const filteredDevices = response.deviceData?.filter(
+          device => device.device_id === connectedDevice?.name,
+        );
+        console.log(
+          'connectedDevice?.id:',
+          JSON.stringify(connectedDevice?.name),
+        );
+        console.log('deviceTimestamp:', JSON.stringify(filteredDevices));
+
+        if (filteredDevices && filteredDevices.length > 0) {
+          const hasFutureTimestamp = filteredDevices.some(device => {
+            const deviceTimestamp = new Date(
+              device.timestamp.replace(' ', 'T') + 'Z',
+            ).getTime();
+            console.log('deviceTimestamp:', deviceTimestamp);
+            console.log('connectionStartTime:', connectionStartTime);
+            return connectionStartTime < deviceTimestamp;
+          });
+
+          console.log('Filtered devices:', hasFutureTimestamp);
+          if (hasFutureTimestamp) {
+            setCurrentScreen('success');
+            setTimeout(() => {
+              setCurrentScreen('dashboard');
+            }, 2000);
+          } else {
+            Alert.alert(
+              'Connection Error',
+              'Failed to connect to the device. Please try again.',
+            );
+            setCurrentScreen('deviceList');
+          }
+        } else {
+          Alert.alert(
+            'Connection Error',
+            'Failed to connect to the device. Please try again.',
+          );
+          setCurrentScreen('deviceList');
+        }
+      } else {
+        console.error('Error:', response?.message);
+      }
+    }, 10000);
+  };
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const StatusPill: React.FC<{ status: boolean }> = ({ status }) => (
     <View
@@ -306,7 +355,7 @@ const App: React.FC = () => {
                 style={[styles.button, styles.secondaryButton]}
                 onPress={() => {
                   setCurrentScreen('scanning');
-                  startScanning;
+                  startScanning();
                 }}
               >
                 <Text style={styles.secondaryButtonText}>Scan Again</Text>
@@ -475,13 +524,17 @@ const App: React.FC = () => {
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={styles.cancelButton}
-                onPress={() => setShowWifiModal(false)}
-              >
+                onPress={() => {
+                  disconnect().catch(console.error);
+                  setShowWifiModal(false)
+                }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.connectButton}
-                onPress={connectToDevice}
+                onPress={() => {
+                    configureWiFi();
+                }}
               >
                 <Text style={styles.connectButtonText}>Connect</Text>
               </TouchableOpacity>
@@ -570,6 +623,7 @@ const styles = StyleSheet.create({
     color: '#374151',
     fontSize: 16,
     fontWeight: '500',
+    paddingHorizontal: 12,
   },
   scanningCircle: {
     marginTop: 50,
