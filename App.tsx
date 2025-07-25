@@ -15,13 +15,15 @@ import {
   Image,
   Animated,
   Dimensions,
+  BackHandler,
 } from 'react-native';
 import { BLEDevice, ConnectedDevice } from './src/types/ble';
 import { useBLE } from './src/hook/useBle';
 import { requestBLEPermissions } from './src/utils/blePermission';
-import api from './src/api';
 import { getDeviceData } from './src/utils/deviceData';
 import useSocket from './src/hook/useSocket';
+import { storage } from './src/store/mmkv';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
 type ScreenType =
   | 'scanning'
@@ -44,6 +46,7 @@ const App: React.FC = () => {
   const [connectionStartTime, setConnectionStartTime] = useState<number>(
     Date.now(),
   );
+  const [cameFromDashboard, setCameFromDashboard] = useState<boolean>(false);
 
   const {
     isScanning,
@@ -69,8 +72,14 @@ const App: React.FC = () => {
         );
       }
     };
-
     checkPermissions();
+    const isFirstTimeDeviceConnected = storage.getBoolean(
+      'isFirstTimeDeviceConnected',
+    );
+    console.log('isFirstTimeDeviceConnected:', isFirstTimeDeviceConnected);
+    if (isFirstTimeDeviceConnected) {
+      setCurrentScreen('dashboard');
+    }
   }, []);
 
   useSocket({
@@ -117,6 +126,23 @@ const App: React.FC = () => {
     }
   }, [currentScreen]);
 
+  useEffect(() => {
+    const backAction = () => {
+      if (cameFromDashboard) {
+        handleBackPress();
+        return true;
+      }
+      return false;
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction,
+    );
+
+    return () => backHandler.remove();
+  }, [cameFromDashboard, currentScreen]);
+
   const fetchData = async () => {
     const response = await getDeviceData();
     if (response.status) {
@@ -124,6 +150,11 @@ const App: React.FC = () => {
     } else {
       console.error('Error:', response?.message);
     }
+  };
+
+  const handleBackPress = () => {
+    setCameFromDashboard(false);
+    setCurrentScreen('dashboard');
   };
 
   const startScanning = async (): Promise<void> => {
@@ -218,6 +249,7 @@ const App: React.FC = () => {
           if (hasFutureTimestamp) {
             setCurrentScreen('success');
             setTimeout(() => {
+              storage.set('isFirstTimeDeviceConnected', true);
               setCurrentScreen('dashboard');
             }, 2000);
           } else {
@@ -296,7 +328,18 @@ const App: React.FC = () => {
   if (currentScreen === 'scanning') {
     screenContent = (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.header}>Add Device</Text>
+        <View style={styles.headerContainer}>
+          {cameFromDashboard && (
+            <Icon
+              name="chevron-left"
+              size={28}
+              style={styles.icon}
+              color="#000"
+              onPress={handleBackPress}
+            />
+          )}
+          <Text style={styles.header}>Add Device</Text>
+        </View>
         <View style={styles.buttonContainer}>
           <TouchableOpacity
             style={[styles.button, styles.primaryButton]}
@@ -339,7 +382,18 @@ const App: React.FC = () => {
   } else if (currentScreen === 'deviceList') {
     screenContent = (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.header}>Add Device</Text>
+         <View style={styles.headerContainer}>
+          {cameFromDashboard && (
+            <Icon
+              name="chevron-left"
+              size={28}
+              style={styles.icon}
+              color="#000"
+              onPress={handleBackPress}
+            />
+          )}
+          <Text style={styles.header}>Add Device</Text>
+        </View>
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={[styles.button, styles.primaryButton]}>
             <Text style={styles.primaryButtonText}>
@@ -399,7 +453,18 @@ const App: React.FC = () => {
   } else if (currentScreen === 'connecting') {
     screenContent = (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.header}>Add Device</Text>
+         <View style={styles.headerContainer}>
+          {cameFromDashboard && (
+            <Icon
+              name="chevron-left"
+              size={28}
+              style={styles.icon}
+              color="#000"
+              onPress={handleBackPress}
+            />
+          )}
+          <Text style={styles.header}>Add Device</Text>
+        </View>
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={[styles.button, styles.primaryButton]}>
             <Text style={styles.primaryButtonText}>Connecting Device</Text>
@@ -422,7 +487,18 @@ const App: React.FC = () => {
   } else if (currentScreen === 'success') {
     screenContent = (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.header}>Add Device</Text>
+         <View style={styles.headerContainer}>
+          {cameFromDashboard && (
+            <Icon
+              name="chevron-left"
+              size={28}
+              style={styles.icon}
+              color="#000"
+              onPress={handleBackPress}
+            />
+          )}
+          <Text style={styles.header}>Add Device</Text>
+        </View>
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={[styles.button, styles.primaryButton]}>
             <Text style={styles.primaryButtonText}>Device Connected</Text>
@@ -442,6 +518,7 @@ const App: React.FC = () => {
               { margin: 10, alignSelf: 'flex-end', paddingHorizontal: 24 },
             ]}
             onPress={() => {
+              setCameFromDashboard(true);
               setCurrentScreen('scanning');
               if (connectedDevice) {
                 disconnect().catch(console.error);
@@ -526,14 +603,15 @@ const App: React.FC = () => {
                 style={styles.cancelButton}
                 onPress={() => {
                   disconnect().catch(console.error);
-                  setShowWifiModal(false)
-                }}>
+                  setShowWifiModal(false);
+                }}
+              >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.connectButton}
                 onPress={() => {
-                    configureWiFi();
+                  configureWiFi();
                 }}
               >
                 <Text style={styles.connectButtonText}>Connect</Text>
@@ -588,9 +666,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
+  icon: {
+    paddingBottom: 8,
+    paddingTop:8
+  },
   header: {
     fontSize: 20,
     fontWeight: '600',
+    flex: 1,
     textAlign: 'center',
     color: '#111827',
     marginVertical: 24,
@@ -659,7 +742,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   deviceList: {
-    flex: 1,
     paddingHorizontal: 24,
   },
   noDevicesContainer: {
@@ -876,6 +958,24 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#008EFB',
     alignItems: 'center',
+  },
+  headerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  backButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+  },
+  backIcon: {
+    fontSize: 20,
+    color: '#374151',
+    fontWeight: '600',
+  },
+
+  headerSpacer: {
+    width: 60,
   },
   connectButtonText: {
     fontSize: 16,

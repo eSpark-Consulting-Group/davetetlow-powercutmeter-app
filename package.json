@@ -11,13 +11,16 @@
   },
   "dependencies": {
     "@react-native/new-app-screen": "0.80.1",
+    "@types/react-native-vector-icons": "^6.4.18",
     "apisauce": "^3.2.0",
     "react": "19.1.0",
     "react-native": "0.80.1",
     "react-native-ble-manager": "^12.1.5",
     "react-native-circular-progress": "^1.4.1",
+    "react-native-mmkv": "^3.3.0",
     "react-native-permissions": "^5.4.1",
     "react-native-svg": "^15.12.0",
+    "react-native-vector-icons": "^10.3.0",
     "react-native-wifi-reborn": "^4.13.6",
     "socket.io-client": "^4.8.1"
   },
