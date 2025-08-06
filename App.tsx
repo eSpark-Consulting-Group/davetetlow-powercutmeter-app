@@ -178,18 +178,18 @@ const App: React.FC = () => {
 
   const selectDevice = (device: any): void => {
     console.log('Selected device:', device);
-    connectToDevice();
+    connectToDevice(device);
     setShowWifiModal(true);
   };
 
-  const connectToDevice = async (): Promise<void> => {
+  const connectToDevice = async (device: any): Promise<void> => {
     if (devices.length === 0) {
       Alert.alert('Error', 'No device selected');
       return;
     }
 
     try {
-      const deviceToConnect = devices[0];
+      const deviceToConnect = device;
       const connectionStartTimeUTC = Date.now();
       setConnectionStartTime(connectionStartTimeUTC);
       await connectToBLEDevice(deviceToConnect);
