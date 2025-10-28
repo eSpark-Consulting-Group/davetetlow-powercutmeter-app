@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -82,22 +82,24 @@ const App: React.FC = () => {
     }
   }, []);
 
-  useSocket({
-    onDeviceUpdate: updatedDevice => {
-      setConnectedDevices(prevDevices => {
-        const existingIndex = prevDevices.findIndex(
-          d => d.device_id === updatedDevice.device_id,
-        );
+  const handleDeviceUpdate = useCallback((updatedDevice: ConnectedDevice) => {
+    setConnectedDevices(prevDevices => {
+      const existingIndex = prevDevices.findIndex(
+        d => d.device_id === updatedDevice.device_id,
+      );
 
-        if (existingIndex !== -1) {
-          const updatedList = [...prevDevices];
-          updatedList[existingIndex] = updatedDevice;
-          return updatedList;
-        } else {
-          return [...prevDevices, updatedDevice];
-        }
-      });
-    },
+      if (existingIndex !== -1) {
+        const updatedList = [...prevDevices];
+        updatedList[existingIndex] = updatedDevice;
+        return updatedList;
+      } else {
+        return [...prevDevices, updatedDevice];
+      }
+    });
+  }, []);
+
+  useSocket({
+    onDeviceUpdate: handleDeviceUpdate,
   });
 
   useEffect(() => {
@@ -176,18 +178,18 @@ const App: React.FC = () => {
 
   const selectDevice = (device: any): void => {
     console.log('Selected device:', device);
-    connectToDevice();
+    connectToDevice(device);
     setShowWifiModal(true);
   };
 
-  const connectToDevice = async (): Promise<void> => {
+  const connectToDevice = async (device: any): Promise<void> => {
     if (devices.length === 0) {
       Alert.alert('Error', 'No device selected');
       return;
     }
 
     try {
-      const deviceToConnect = devices[0];
+      const deviceToConnect = device;
       const connectionStartTimeUTC = Date.now();
       setConnectionStartTime(connectionStartTimeUTC);
       await connectToBLEDevice(deviceToConnect);
@@ -224,6 +226,8 @@ const App: React.FC = () => {
   const getAllRegisteredDevices = async () => {
     setTimeout(async () => {
       const response = await getDeviceData();
+
+      console.log('response', response);
 
       if (response.status) {
         const filteredDevices = response.deviceData?.filter(
@@ -382,7 +386,7 @@ const App: React.FC = () => {
   } else if (currentScreen === 'deviceList') {
     screenContent = (
       <SafeAreaView style={styles.container}>
-         <View style={styles.headerContainer}>
+        <View style={styles.headerContainer}>
           {cameFromDashboard && (
             <Icon
               name="chevron-left"
@@ -453,7 +457,7 @@ const App: React.FC = () => {
   } else if (currentScreen === 'connecting') {
     screenContent = (
       <SafeAreaView style={styles.container}>
-         <View style={styles.headerContainer}>
+        <View style={styles.headerContainer}>
           {cameFromDashboard && (
             <Icon
               name="chevron-left"
@@ -487,7 +491,7 @@ const App: React.FC = () => {
   } else if (currentScreen === 'success') {
     screenContent = (
       <SafeAreaView style={styles.container}>
-         <View style={styles.headerContainer}>
+        <View style={styles.headerContainer}>
           {cameFromDashboard && (
             <Icon
               name="chevron-left"
@@ -668,7 +672,7 @@ const styles = StyleSheet.create({
   },
   icon: {
     paddingBottom: 8,
-    paddingTop:8
+    paddingTop: 8,
   },
   header: {
     fontSize: 20,
