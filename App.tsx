@@ -35,6 +35,7 @@ type ScreenType =
 
 const App: React.FC = () => {
   const { height, width } = Dimensions.get('window');
+  const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('scanning');
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDevice[]>(
@@ -146,11 +147,16 @@ const App: React.FC = () => {
   }, [cameFromDashboard, currentScreen]);
 
   const fetchData = async () => {
+    setLoading(true);
     const response = await getDeviceData();
+    console.log('response.deviceData', response.deviceData);
+
     if (response.status) {
       setConnectedDevices(response.deviceData || []);
+      setLoading(false);
     } else {
-      console.error('Error:', response?.message);
+      setLoading(false);
+      console.log('Error:', response?.message);
     }
   };
 
@@ -535,6 +541,28 @@ const App: React.FC = () => {
             style={styles.devicesScrollView}
             showsVerticalScrollIndicator={false}
           >
+            {loading ? (
+              <ActivityIndicator
+                size={'large'}
+                color={'#008EFB'}
+                style={{ marginTop: 30 }}
+              />
+            ) : null}
+
+            {!loading ? (
+              connectedDevices.length < 1 ? (
+                <View style={styles.notFoundAndfetchCont}>
+                  <Text style={styles.NotFoundText}>No Device data found</Text>
+                  <TouchableOpacity
+                    style={styles.fetchButton}
+                    onPress={fetchData}
+                  >
+                    <Text style={styles.fetchText}>fetch again</Text>
+                    <Icon name="sync" size={20} color={'#FFF'} />
+                  </TouchableOpacity>
+                </View>
+              ) : null
+            ) : null}
             {connectedDevices.map(device => (
               <DeviceCard key={device.device_id} device={device} />
             ))}
@@ -682,6 +710,25 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginVertical: 24,
   },
+  notFoundAndfetchCont: { alignSelf: 'center', alignItems: 'center' },
+  NotFoundText: {
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+    color: '#000000',
+    marginTop: 30,
+    marginBottom: 10,
+  },
+  fetchButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#008EFB',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 10,
+    gap: 10,
+  },
+  fetchText: { color: '#FFF', fontSize: 18 },
   buttonContainer: {
     paddingHorizontal: 24,
     marginBottom: 32,
